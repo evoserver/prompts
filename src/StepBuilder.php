@@ -8,18 +8,23 @@ class StepBuilder
 {
     /**
      * Each step that should be executed.
+     *
+     * @var array<int, Step>
      */
     protected array $steps = [];
 
     /**
      * The responses provided by each step.
+     *
+     * @var array<mixed>
      */
     protected array $responses = [];
 
     /**
      * Add a new step.
+     *
      */
-    public function add(Closure $step, Closure|false $revert = null, string $key = null)
+    public function add(Closure $step, Closure|false $revert = null, string $key = null): self
     {
 
         if ($revert === null) {
@@ -35,6 +40,8 @@ class StepBuilder
 
     /**
      * Run all of the given steps.
+     *
+     * @return array<mixed>
      */
     public function run(): array
     {
