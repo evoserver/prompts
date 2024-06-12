@@ -7,6 +7,7 @@ use function Laravel\Prompts\note;
 use function Laravel\Prompts\password;
 use function Laravel\Prompts\select;
 use function Laravel\Prompts\spin;
+use function Laravel\Prompts\steps;
 use function Laravel\Prompts\suggest;
 use function Laravel\Prompts\text;
 
@@ -41,7 +42,7 @@ $responses = steps()
             $value[0] !== '.' => 'Please enter a relative path',
             default => null,
         },
-    ))
+    ), key: 'path')
     ->add(fn() => password(
         label: 'Provide a password',
         validate: fn($value) => match (true) {
@@ -82,15 +83,18 @@ $responses = steps()
         }
 
         return $install;
-    }, revert: function () {
-        spin(fn() => sleep(3), 'Uninstalling...');
-    })
+    }, revert: function ($responses) {
+        if ($responses['install']) {
+            spin(fn() => sleep(3), 'Uninstalling...');
+        }
+    }, key: 'install')
+    ->add(fn() => confirm('Finish installation?'))
     ->add(fn($responses) => note(<<<EOT
     Installation complete!
 
     To get started, run:
 
-        cd {$responses[2]}
+        cd {$responses['path']}
         php artisan serve
     EOT
     ))

@@ -3,7 +3,6 @@
 namespace Laravel\Prompts;
 
 use Closure;
-use Laravel\Prompts\Exceptions\FormRevertedException;
 use Laravel\Prompts\Output\ConsoleOutput;
 use RuntimeException;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -21,74 +20,121 @@ abstract class Prompt
     use Concerns\Themes;
 
     /**
-     * The current state of the prompt.
+     * The revert handler from the StepBuilder.
      */
-    public string $state = 'initial';
-
-    /**
-     * The error message from the validator.
-     */
-    public string $error = '';
-
-    /**
-     * The cancel message displayed when this prompt is cancelled.
-     */
-    public string $cancelMessage = 'Cancelled.';
-
-    /**
-     * The previously rendered frame.
-     */
-    protected string $prevFrame = '';
-
-    /**
-     * How many new lines were written by the last output.
-     */
-    protected int $newLinesWritten = 1;
-
-    /**
-     * Whether user input is required.
-     */
-    public bool|string $required;
-
-    /**
-     * The validator callback or rules.
-     */
-    public mixed $validate;
-
+    protected static ?Closure $revertUsing = null;
     /**
      * The cancellation callback.
      */
     protected static ?Closure $cancelUsing;
-
+    /**
+     * The custom validation callback.
+     */
+    protected static ?Closure $validateUsing;
+    /**
+     * The output instance.
+     */
+    protected static OutputInterface $output;
+    /**
+     * The terminal instance.
+     */
+    protected static Terminal $terminal;
+    /**
+     * The current state of the prompt.
+     */
+    public string $state = 'initial';
+    /**
+     * The error message from the validator.
+     */
+    public string $error = '';
+    /**
+     * The cancel message displayed when this prompt is cancelled.
+     */
+    public string $cancelMessage = 'Cancelled.';
+    /**
+     * Whether user input is required.
+     */
+    public bool|string $required;
+    /**
+     * The validator callback or rules.
+     */
+    public mixed $validate;
+    /**
+     * The previously rendered frame.
+     */
+    protected string $prevFrame = '';
+    /**
+     * How many new lines were written by the last output.
+     */
+    protected int $newLinesWritten = 1;
     /**
      * Indicates if the prompt has been validated.
      */
     protected bool $validated = false;
 
     /**
-     * The custom validation callback.
+     * Register a callback to be invoked when a user cancels a prompt.
      */
-    protected static ?Closure $validateUsing;
+    public static function cancelUsing(?Closure $callback): void
+    {
+        static::$cancelUsing = $callback;
+    }
 
     /**
-     * The revert handler from the StepBuilder.
+     * Set the output instance.
      */
-    protected static ?Closure $revertUsing = null;
+    public static function setOutput(OutputInterface $output): void
+    {
+        self::$output = $output;
+    }
 
     /**
-     * The output instance.
+     * Set the custom validation callback.
      */
-    protected static OutputInterface $output;
+    public static function validateUsing(Closure $callback): void
+    {
+        static::$validateUsing = $callback;
+    }
 
     /**
-     * The terminal instance.
+     * Revert the prompt using the given callback.
+     *
+     * @internal
      */
-    protected static Terminal $terminal;
+    public static function revertUsing(Closure $callback): void
+    {
+        static::$revertUsing = $callback;
+    }
 
     /**
-     * Get the value of the prompt.
+     * Clear any previous revert callback.
+     *
+     * @internal
      */
-    abstract public function value(): mixed;
+    public static function preventReverting(): void
+    {
+        static::$revertUsing = null;
+    }
+
+    /**
+     * Write output directly, bypassing newline capture.
+     */
+    protected static function writeDirectly(string $message): void
+    {
+        match (true) {
+            method_exists(static::output(), 'writeDirectly') => static::output()->writeDirectly($message),
+            method_exists(static::output(), 'getOutput') => static::output()->getOutput()->write($message),
+            default => static::output()->write($message),
+        };
+    }
+
+    /**
+     * Get the current output instance.
+     */
+    protected static function output(): OutputInterface
+    {
+        return self::$output ??= new ConsoleOutput();
+    }
 
     /**
      * Render the prompt and listen for input.
@@ -104,7 +150,7 @@ abstract class Prompt
 
             static::$interactive ??= stream_isatty(STDIN);
 
-            if (! static::$interactive) {
+            if (!static::$interactive) {
                 return $this->default();
             }
 
@@ -136,9 +182,9 @@ abstract class Prompt
                         }
                     }
 
-                    if ($key === Key::CTRL_U && self::$revertUsing) {
-                        throw new FormRevertedException();
-                    }
+//                    if ($key === Key::CTRL_U && self::$revertUsing) {
+//                        throw new FormRevertedException();
+//                    }
 
                     return $this->value();
                 }
@@ -146,22 +192,6 @@ abstract class Prompt
         } finally {
             $this->clearListeners();
         }
-    }
-
-    /**
-     * Register a callback to be invoked when a user cancels a prompt.
-     */
-    public static function cancelUsing(?Closure $callback): void
-    {
-        static::$cancelUsing = $callback;
-    }
-
-    /**
-     * How many new lines were written by the last output.
-     */
-    public function newLinesWritten(): int
-    {
-        return $this->newLinesWritten;
     }
 
     /**
@@ -175,31 +205,21 @@ abstract class Prompt
     }
 
     /**
-     * Set the output instance.
+     * How many new lines were written by the last output.
      */
-    public static function setOutput(OutputInterface $output): void
+    public function newLinesWritten(): int
     {
-        self::$output = $output;
+        return $this->newLinesWritten;
     }
 
     /**
-     * Get the current output instance.
+     * Check whether the environment can support the prompt.
      */
-    protected static function output(): OutputInterface
+    private function checkEnvironment(): void
     {
-        return self::$output ??= new ConsoleOutput();
-    }
-
-    /**
-     * Write output directly, bypassing newline capture.
-     */
-    protected static function writeDirectly(string $message): void
-    {
-        match (true) {
-            method_exists(static::output(), 'writeDirectly') => static::output()->writeDirectly($message),
-            method_exists(static::output(), 'getOutput') => static::output()->getOutput()->write($message),
-            default => static::output()->write($message),
-        };
+        if (PHP_OS_FAMILY === 'Windows') {
+            throw new RuntimeException('Prompts is not currently supported on Windows. Please use WSL or configure a fallback.');
+        }
     }
 
     /**
@@ -208,34 +228,6 @@ abstract class Prompt
     public static function terminal(): Terminal
     {
         return static::$terminal ??= new Terminal();
-    }
-
-    /**
-     * Set the custom validation callback.
-     */
-    public static function validateUsing(Closure $callback): void
-    {
-        static::$validateUsing = $callback;
-    }
-
-    /**
-     * Revert the prompt using the given callback.
-     *
-     * @internal
-     */
-    public static function revertUsing(Closure $callback): void
-    {
-        static::$revertUsing = $callback;
-    }
-
-    /**
-     * Clear any previous revert callback.
-     *
-     * @internal
-     */
-    public static function preventReverting(): void
-    {
-        static::$revertUsing = null;
     }
 
     /**
@@ -273,18 +265,6 @@ abstract class Prompt
     }
 
     /**
-     * Submit the prompt.
-     */
-    protected function submit(): void
-    {
-        $this->validate($this->value());
-
-        if ($this->state !== 'error') {
-            $this->state = 'submit';
-        }
-    }
-
-    /**
      * Handle a key press and determine whether to continue.
      */
     private function handleKeyPress(string $key): bool
@@ -300,7 +280,7 @@ abstract class Prompt
         }
 
         if ($key === Key::CTRL_U) {
-            if (! self::$revertUsing) {
+            if (!self::$revertUsing) {
                 $this->state = 'error';
                 $this->error = 'This cannot be reverted.';
 
@@ -342,7 +322,7 @@ abstract class Prompt
             return;
         }
 
-        if (! isset($this->validate) && ! isset(static::$validateUsing)) {
+        if (!isset($this->validate) && !isset(static::$validateUsing)) {
             return;
         }
 
@@ -352,7 +332,7 @@ abstract class Prompt
             default => throw new RuntimeException('The validation logic is missing.'),
         };
 
-        if (! is_string($error) && ! is_null($error)) {
+        if (!is_string($error) && !is_null($error)) {
             throw new RuntimeException('The validator must return a string or null.');
         }
 
@@ -371,14 +351,9 @@ abstract class Prompt
     }
 
     /**
-     * Check whether the environment can support the prompt.
+     * Get the value of the prompt.
      */
-    private function checkEnvironment(): void
-    {
-        if (PHP_OS_FAMILY === 'Windows') {
-            throw new RuntimeException('Prompts is not currently supported on Windows. Please use WSL or configure a fallback.');
-        }
-    }
+    abstract public function value(): mixed;
 
     /**
      * Restore the cursor and terminal state.
@@ -388,5 +363,17 @@ abstract class Prompt
         $this->restoreCursor();
 
         static::terminal()->restoreTty();
+    }
+
+    /**
+     * Submit the prompt.
+     */
+    protected function submit(): void
+    {
+        $this->validate($this->value());
+
+        if ($this->state !== 'error') {
+            $this->state = 'submit';
+        }
     }
 }
