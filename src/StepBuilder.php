@@ -6,10 +6,19 @@ use Closure;
 
 class StepBuilder
 {
+    /**
+     * Each step that should be executed.
+     */
     protected array $steps = [];
 
+    /**
+     * The responses provided by each step.
+     */
     protected array $responses = [];
 
+    /**
+     * Add a new step.
+     */
     public function add(Closure $step, Closure|false $revert = null, string $key = null)
     {
 
@@ -24,6 +33,9 @@ class StepBuilder
 
     }
 
+    /**
+     * Run all of the given steps.
+     */
     public function run(): array
     {
         $index = 0;
